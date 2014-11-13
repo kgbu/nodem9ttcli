@@ -1,4 +1,4 @@
-Node.js で MQTT をコマンドラインで試してみるログ（続けたい...）
+Node.js で MQTT をコマンドラインで試してみるログ（2014/10/6に更新しました）
 
 時雨堂さんがMQTTブローカーサービスhttp://sango.shiguredo.jp をリリースして以来、ちょっと元気がでたので、素振りと称してやっつけてますw
 
@@ -9,6 +9,7 @@ motivated by：http://null.ly/post/56517703680/apache-apollo-node-js-mqtt
 ## History
 1. Draft : 2014/9/18
 1. initial post on Qiita : 2014/9/21
+1. Websocket使う例をmowsで追加しました： 2014/10/6
 
 ## 準備
 
@@ -156,206 +157,44 @@ $ node sub.js > ~/public_html/mqtt_text.html
 
 http://hoge.hoge/~username/mqtt_text.html の内容がどんどん変化していくのがわかります。
 
-# TODOs - 難航しておりますw
+# TODOだったことなど、、、
 
-## websocket経由ではどうか？
+## websocket経由ではどうか？結局MOWSのサンプル動かしました
 
 sangoはWebsocketでも繋がるので、試したくなるのは人情です。
+いろいろ自分でやってみようとしたのですが、結局は<a href="https://github.com/mcollina/mows">[mows]</a>のサンプルをどうぞ、ということになりました。
 
-### モジュールをインストール (OSX)
-
-(2014.09.21時点ではまだここまでしかやってませんでした）
-
-```{sh}
-$ npm install socket.io
-```
-
-
-### サンプルが無い...
-
-JavascriptでWebsocketでMQTT brokerに繫ぐサンプルはPahoにはありました。でも、node.jsではそれらしいものは見当たらず、、、考えてみれば、socket.ioにMQTTを組み込むってそのままではできない、その逆も、、、これはPahoを参考にモジュール修正するしかないかも、、楽しげw。
-
-いやー、厳しい。全然違うコード体系だ。それでもやるべきことは、websocketのバイナリframeをサポートしていけばいい。プロトコル名とかはwebsocketだから違うわけでもなさげ
-
-おそらくmqtt.jsでclientを作るところをいじれば良いはず。
-
-```{javascript|MQTT.js/lib/mqtt.js}
-     6	var net = require('net')
-(中略）
-    70	module.exports.createClient = function(port, host, opts) {
-    71	  var builder, mqttClient;
-    72	
-(中略)
-    89	  if (opts && opts.clean === false && !opts.clientId) {
-    90	    throw new Error("Missing clientId for unclean clients");
-    91	  }
-    92	
-    93	  builder = function() {
-    94	    return net.createConnection(port, host);
-    95	  };
-    96	
-    97	  mqttClient = new MqttClient(builder, opts);
-    98	
-    99	  return mqttClient;
-   100	};
-```
-93行：net.createConnectionは普通にTCPの接続になっているようだ。http://nodejs.org/api/net.html#net_net_createconnection_options_connectionlistener
-97行：でそれを引数にMqttClientをinstanciateしているが、これは
-
+元のサンプルはここ参照：　https://github.com/mcollina/mows#on-node
+(自分のサンプルではURLとport番号がカブっているのが気に入らないのですが...)
 
 ```
-    9	  var MqttClient = require('./client');
-```
-であるから、client.jsを見ることになる。
+var ops = {username: 認証用ユーザー名,
+      password: 認証用パスワード};
+var mows   = require('mows')
+  , client = mows.createClient(ポート番号,'ws://MQTTサーバー:ポート番号/mqtt',ops);
 
-```{MQTT.js/lib/client.js}
-    34	var MqttClient = module.exports =
-    35	function MqttClient(streamBuilder, options) {
-    36	  var that = this;
-    37	
-    38	  if (!(this instanceof MqttClient)) {
-    39	    return new MqttClient(streamBuilder, options);
-    40	  }
-     : (opitonの扱い)
-    55	  this.streamBuilder = streamBuilder;
-    56	
-    57	  this._setupStream();
-    58	
-    59	  // Ping timer, setup in _setupPingTimer
-    60	  this.pingTimer = null;
-    61	  // Is the client connected?
-    62	  this.connected = false;
-    63	  // Packet queue
-    64	  this.queue = [];
-    65	  // Are we intentionally disconnecting?
-    66	  this.disconnecting = false;
-    67	  // Reconnect timer
-    68	  this.reconnectTimer = null;
-    69	  // MessageIDs starting with 1
-    70	  this.nextId = Math.floor(Math.random() * 65535);
-    71	
-    72	  // Inflight messages
-    73	  this.inflight = {
-    74	    puback: {},
-    75	    pubrec: {},
-    76	    pubcomp: {},
-    77	    suback: {},
-    78	    unsuback: {}
-    79	  };
-    80	
-    81	  // Incoming messages
-    82	  this.incoming = {
-    83	    pubrel: {}
-    84	  };
-    85	
-    86	  // Mark connected on connect
-    87	  this.on('connect', function() {
-    88	    this.connected = true;
-    89	  });
-    90	
-    91	  // Mark disconnected on stream close
-    92	  this.on('close', function() {
-    93	    this.connected = false;
-    94	  });
-    95	
-    96	  // Setup ping timer
-    97	  this.on('connect', this._setupPingTimer);
-    98	
-    99	  // Send queued packets
-   100	  this.on('connect', function() {
-   101	    var queue = that.queue
-   102	      , length = queue.length;
-   103	
-   104	    for (var i = 0; i < length; i += 1) {
-   105	      that._sendPacket(
-   106	        queue[i].type,
-   107	        queue[i].packet,
-   108	        queue[i].cb
-   109	      );
-   110	    }
-   111	    that.queue = [];
-   112	  });
-   113	
-   114	
-   115	  // Clear ping timer
-   116	  this.on('close', function () {
-   117	    if (that.pingTimer !== null) {
-   118	      clearInterval(that.pingTimer);
-   119	      that.pingTimer = null;
-   120	    }
-   121	  });
-   122	
-   123	  // Setup reconnect timer on disconnect
-   124	  this.on('close', function() {
-   125	    that._setupReconnect();
-   126	  });
-   127	
-   128	  events.EventEmitter.call(this);
-   129	};
-   130	util.inherits(MqttClient, events.EventEmitter);
+client.subscribe ('トピックのベース/#');
+client.publish('トピックのベース/mowstest', 'Hello mqtt');
+
+client.on('message', function (topic, message) {
+  console.log(topic, message);
+
+  client.end();
+});
 ```
 
-35 : MqttClientはStreamBuilderとして接続を受けている。ここをwebsocket受け取れるようにする、もしくは別クラスを定義する。
-38 : キャッシュしたインスタンスを返すケース
-57 : 接続をセットアップする_setupStream(137行)を呼び出し
+実行結果
 
-
-```{mqtt.js/lib/client.js}
-   137	MqttClient.prototype._setupStream = function() {
-   138	  var that = this;
-   139	
-   140	  this._clearReconnect();
-   141	
-   142	  this.stream = this.streamBuilder();
-   143	
-   144	  // MqttConnection
-   145	  this.conn = this.stream.pipe(new Connection());
+```
+$ node mowspub.js
+kgbu@github/mowstest Hello mqtt
 ```
 
-142 : this.stream にTCP接続を代入している。
-
-というわけで、connectionとsocket.ioを入れ替えるとした場合、大本のところで入れ替えることになるが、動作が同じかどうかは検証の必要がある。
-
-streamが使われるところ
-
-```{mqtt.js/lib/client.js}
-   145	  this.conn = this.stream.pipe(new Connection());
-   153	  this.stream.on('error', nop)
-   156	  this.stream.on('close', this.emit.bind(this, 'close'));
-   159	  this.stream.on('connect', function () {
-   163	  this.stream.on('secureConnect', function () {
-   433	    this.stream.destroy();
-   435	    this.stream.end();
-```
-
-+ イベント (on..)
-	- 'error'
-	- 'close'
-	- 'connect'
-	- 'secureConnect'
-+ pipe( Connection )
-+ destroy()
-+ end()
-
-
-### そもそも 
-http://wiki.eclipse.org/Paho/Paho_Websockets
-http://tools.ietf.org/html/rfc6455 - websocket RFC
-
-Pahoのドキュメントでは
-Making MQTT over Websockets inter-operable:
-
-- Must support WebSockets as defined by RFC 6455
-- Must use websocket binary frames.
-	- This enables MQTT v3,1 per the specification to flow over websockets with no change to the MQTT packets
-- Must use "mqttv3.1" as the websocket protocol name.
-	- This is applicable when creating the websocket: e.g. new WebSocket(wsurl, 'mqttv3.1')
-- The path portion of the url specified on the MQTT connect should be "mqtt"
-    For instance ws://m2m.eclipse.org:800/mqtt . ```mqtt``` should be the default with the option for an alternative to be configured / specified
-
-
-となっている。
-
+## MQTT.jsとmowsの関係を理解したい
+そもそもmowsはMQTT.jsをwebsocketで繫ぐ、ということで、自分も同じことをしようとして、MQTT.jsがstream使っているところへ<a href="https://github.com/einaros/ws">WS</a>のwebsocket出力をどう繫ごうかと考えていました。
+実際にwebsocketへのupgradeまではできましたが、binaryのデータとしてMQTTのパケットを構築する部分は是非MQTT.jsのコードを利用したいと思ってコード読んでいましたが、疲れたので(w、MOWSにおすがりしましたw
+mowsではそこを<a href="http://github.com/maxogden/websocket-stream.git">websocket-stream</a>を使っていました。
+その実体は　https://github.com/maxogden/websocket-stream/blob/master/index.js にあり、勉強になりました。
 
 
 # 参考文献　肩に乗せてもらった巨人達
